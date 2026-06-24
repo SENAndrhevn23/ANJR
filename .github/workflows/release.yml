@@ -1,0 +1,107 @@
+name: ANJR Release
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release version (example: v1.0.0)"
+        required: true
+        type: string
+      release_description:
+        description: "Release description"
+        required: false
+        default: "New release for ANJR."
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+
+# ===============================
+# CREATE TAG
+# ===============================
+  create-tag:
+    name: Create Git Tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and Push Tag
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git fetch --tags
+
+          if git show-ref --tags --verify --quiet "refs/tags/${{ inputs.tag_name }}"; then
+            echo "Tag already exists"
+          else
+            git tag "${{ inputs.tag_name }}"
+            git push origin "${{ inputs.tag_name }}"
+          fi
+
+# ===============================
+# BUILD GAME (Reusable Workflow)
+# ===============================
+  build:
+    name: Build Game
+    needs: create-tag
+    uses: ./.github/workflows/main.yml
+    secrets: inherit
+    with:
+      tag_name: ${{ inputs.tag_name }}
+
+# ===============================
+# CREATE GITHUB RELEASE
+# ===============================
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v4
+        with:
+          name: linuxBuild
+          path: release/linux
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: windowsBuild
+          path: release/windows
+
+      - name: Zip Linux build
+        run: |
+          cd release/linux
+          zip -r ../../ANJR-linux.zip .
+
+      - name: Zip Windows build
+        run: |
+          cd release/windows
+          zip -r ../../ANJR-windows.zip .
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.tag_name }}
+          body: ${{ inputs.release_description }}
+          files: |
+            ANJR-linux.zip
+            ANJR-windows.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
